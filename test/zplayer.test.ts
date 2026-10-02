@@ -71,6 +71,16 @@ describe('createZPlayer', () => {
     off.destroy()
   })
 
+  it('can keep Chromecast (and Google) out', () => {
+    const g = globalThis as { chrome?: { cast?: { isAvailable: boolean } } }
+    g.chrome = {}
+    createZPlayer(document.createElement('div'), { source: { src: 'a' } }).destroy()
+    expect(g.chrome.cast).toBeUndefined()
+    createZPlayer(document.createElement('div'), { source: { src: 'a' }, cast: false }).destroy()
+    expect(g.chrome.cast).toEqual({ isAvailable: false })
+    delete g.chrome
+  })
+
   it('plays one video at a time', () => {
     const a = createZPlayer(document.createElement('div'), { source: { src: 'a' } })
     const b = createZPlayer(document.createElement('div'), { source: { src: 'b' } })

@@ -44,6 +44,13 @@ export interface ZPlayerOptions {
   /** Data saver: never load above this resolution. */
   maxResolution?: ZResolution
   theme?: ZTheme
+  /**
+   * Chromecast (default true). On Chrome, the Cast module is loaded from
+   * Google's servers when a video shows; false loads nothing from Google and
+   * hides the button, for the whole page (it cannot be turned back on once a
+   * player has loaded the module). AirPlay is not affected.
+   */
+  cast?: boolean
   /** Interface language (default "fr"). */
   lang?: string
   /**
@@ -73,6 +80,15 @@ const DEFAULT_THEME: Required<ZTheme> = { accent: '#FFA500', primary: '#FFFFFF',
 // Only one video plays at a time across every Z Player of the page.
 const players = new Set<MuxPlayerElement>()
 
+/**
+ * Mux Player loads Google's Cast sender unless `chrome.cast` already exists:
+ * declaring Cast unavailable keeps it from loading and hides the cast button.
+ */
+function disableCast() {
+  const c = (globalThis as { chrome?: { cast?: unknown } }).chrome
+  if (c && !c.cast) c.cast = { isAvailable: false }
+}
+
 function applySource(el: MuxPlayerElement, source: ZSource) {
   if ('playbackId' in source) {
     el.playbackId = source.playbackId
@@ -86,6 +102,7 @@ function applySource(el: MuxPlayerElement, source: ZSource) {
 export function createZPlayer(container: HTMLElement, options: ZPlayerOptions): ZPlayerHandle {
   let opts = options
   setLanguage(opts.lang ?? 'fr')
+  if (opts.cast === false) disableCast()
   const el = document.createElement('mux-player') as MuxPlayerElement
   const theme = { ...DEFAULT_THEME, ...opts.theme }
   el.style.width = '100%'
