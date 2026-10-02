@@ -102,6 +102,17 @@ describe('createZPlayer', () => {
     expect(onProgress).toHaveBeenLastCalledWith(300, 600)
   })
 
+  it('a destroyed player never plays on (late autoplay)', () => {
+    const h = createZPlayer(document.createElement('div'), { source: { playbackId: 'pb' }, autoplay: true })
+    const el = h.element as unknown as Fake
+    h.destroy()
+    expect(el.hasAttribute('autoplay')).toBe(false)
+    expect(el.muted).toBe(true)
+    expect(el.playbackId).toBeUndefined()
+    el.play() // e.g. the autoplay attempt resolving after the removal
+    expect(el.paused).toBe(true)
+  })
+
   it('signals the end of a live (ended or failing stream) instead of an error', () => {
     const onLiveEnded = vi.fn()
     const onProgress = vi.fn()

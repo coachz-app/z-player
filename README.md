@@ -18,7 +18,7 @@ Lecteur vidéo réutilisable pour le streaming HLS, construit sur [Mux Player](h
 Chaque version est publiée en archive sur les [releases](https://github.com/coachz-app/z-player/releases) (aucun compte ni jeton nécessaire) :
 
 ```bash
-npm install https://github.com/coachz-app/z-player/releases/download/v0.2.0/coachz-app-z-player-0.2.0.tgz
+npm install https://github.com/coachz-app/z-player/releases/download/v0.2.1/coachz-app-z-player-0.2.1.tgz
 ```
 
 ## React
