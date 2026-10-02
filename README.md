@@ -54,7 +54,7 @@ const player = createZPlayer(document.querySelector('#player'), { source: { src:
 // player.update({ theme: { accent: '#0070f3' } }) ; player.destroy()
 ```
 
-Le module charge Mux Player (≈ 150 Ko compressés) : importez-le à la demande (`import()`), au moment d'afficher un lecteur.
+Le module charge Mux Player (≈ 320 Ko compressés, hls.js inclus) : importez-le à la demande (`import()`), au moment d'afficher un lecteur.
 
 ## Options
 
