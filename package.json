@@ -1,6 +1,6 @@
 {
   "name": "@coachz-app/z-player",
-  "version": "0.2.1",
+  "version": "0.3.0",
   "description": "Lecteur vidéo HLS réutilisable basé sur Mux Player : thème configurable, reprise de position, une seule vidéo à la fois, live faible latence et DVR, économie de données, statistiques Mux Data.",
   "license": "MIT",
   "type": "module",

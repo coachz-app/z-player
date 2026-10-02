@@ -18,7 +18,7 @@ Lecteur vidéo réutilisable pour le streaming HLS, construit sur [Mux Player](h
 Chaque version est publiée en archive sur les [releases](https://github.com/coachz-app/z-player/releases) (aucun compte ni jeton nécessaire) :
 
 ```bash
-npm install https://github.com/coachz-app/z-player/releases/download/v0.2.1/coachz-app-z-player-0.2.1.tgz
+npm install https://github.com/coachz-app/z-player/releases/download/v0.3.0/coachz-app-z-player-0.3.0.tgz
 ```
 
 ## React
@@ -67,6 +67,7 @@ Le module charge Mux Player (≈ 320 Ko compressés, hls.js inclus) : importez-l
 | `startTime` | reprise (en secondes, vidéo à la demande) |
 | `maxResolution` | `720p` / `1080p` / `1440p` / `2160p` : plafond (économie de données) |
 | `theme` | `accent` (boutons, barre), `primary` (icônes), `secondary` (fond des commandes) |
+| `cast` | Chromecast (oui par défaut) ; `false` : rien n'est chargé depuis Google et le bouton disparaît (pour toute la page) |
 | `lang` | langue de l'interface (`fr` par défaut) |
 | `analytics` | `envKey`, `videoId`, `viewerId`, `playerName`, `cookies` (Mux Data, sans cookie par défaut, Do Not Track respecté) ; `false` pour ne rien mesurer |
 | `progressInterval` | secondes entre deux `onProgress` (10 par défaut) |
@@ -74,7 +75,7 @@ Le module charge Mux Player (≈ 320 Ko compressés, hls.js inclus) : importez-l
 
 ## Sécurité du contenu (CSP)
 
-Mux Player injecte ses styles dans son Shadow DOM : `style-src` doit autoriser `'unsafe-inline'`. Chromecast charge `https://www.gstatic.com/cv/js/sender/…` (`script-src`). Il charge les flux depuis `stream.mux.com` / `*.mux.com` (`media-src`, `connect-src`, `img-src https:`) et utilise des `blob:` (`media-src`, `worker-src`).
+Mux Player injecte ses styles dans son Shadow DOM : `style-src` doit autoriser `'unsafe-inline'`. Chromecast charge `https://www.gstatic.com/cv/js/sender/…` (`script-src`), sauf avec `cast: false`. Il charge les flux depuis `stream.mux.com` / `*.mux.com` (`media-src`, `connect-src`, `img-src https:`) et utilise des `blob:` (`media-src`, `worker-src`).
 
 ## Développement
 
