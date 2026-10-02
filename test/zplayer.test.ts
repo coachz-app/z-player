@@ -50,7 +50,9 @@ describe('createZPlayer', () => {
     expect(el.streamType).toBe('on-demand')
     expect(el.accentColor).toBe('#FFA500')
     expect(el.envKey).toBe('env')
-    expect(el.metadata).toMatchObject({ video_id: 'content:1', video_title: 'Capsule', viewer_user_id: '7' })
+    expect(el.metadata).toMatchObject({ video_id: 'content:1', video_title: 'Capsule', viewer_user_id: '7', player_name: 'Z Player' })
+    expect(el.disableCookies).toBe(true) // no cookie unless asked
+    expect(el.disableTracking).toBe(false)
     h.destroy()
     expect(box.contains(el)).toBe(false)
   })
@@ -64,6 +66,9 @@ describe('createZPlayer', () => {
     expect(el.getAttribute('autoplay')).toBe('any')
     expect(el.getAttribute('preload')).toBe('auto')
     h.destroy()
+    const off = createZPlayer(document.createElement('div'), { source: { src: 'b' }, analytics: false })
+    expect((off.element as unknown as Fake).disableTracking).toBe(true)
+    off.destroy()
   })
 
   it('plays one video at a time', () => {
