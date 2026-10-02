@@ -188,8 +188,18 @@ export function createZPlayer(container: HTMLElement, options: ZPlayerOptions): 
       el.removeEventListener('ended', onEnded)
       el.removeEventListener('error', onError)
       players.delete(el)
+      // A player removed while it is still starting (autoplay, React remounts,
+      // navigation to the next video) must never play on, unseen and unreachable:
+      // no more autoplay, no sound, no source, and any late play is undone.
+      el.removeAttribute('autoplay')
+      el.muted = true
+      el.addEventListener('play', () => el.pause())
       el.pause()
       el.remove()
+      el.removeAttribute('playback-id')
+      el.removeAttribute('src')
+      el.playbackId = undefined
+      el.src = undefined
     },
   }
 }
