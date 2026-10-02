@@ -46,8 +46,12 @@ export interface ZPlayerOptions {
   theme?: ZTheme
   /** Interface language (default "fr"). */
   lang?: string
-  /** Mux Data: environment key (public) and what to attach to each view. */
-  analytics?: { envKey?: string; videoId?: string; viewerId?: string }
+  /**
+   * Mux Data: environment key (public) and what to attach to each view. No
+   * cookie unless `cookies` is true; nothing is measured when the browser asks
+   * not to be tracked (Do Not Track) or with `analytics: false`.
+   */
+  analytics?: false | { envKey?: string; videoId?: string; viewerId?: string; playerName?: string; cookies?: boolean }
   /** Seconds between two onProgress calls while playing (default 10). */
   progressInterval?: number
   onProgress?: (position: number, duration: number) => void
@@ -112,13 +116,15 @@ export function createZPlayer(container: HTMLElement, options: ZPlayerOptions): 
   // "any": with sound when allowed, muted otherwise (mobile browsers).
   if (opts.autoplay) el.setAttribute('autoplay', 'any')
 
-  const a = opts.analytics
+  const a = opts.analytics || undefined
+  el.disableTracking = opts.analytics === false || navigator.doNotTrack === '1'
+  el.disableCookies = !a?.cookies
   if (a?.envKey) el.envKey = a.envKey
   el.metadata = {
     video_id: a?.videoId,
     video_title: opts.title,
     viewer_user_id: a?.viewerId,
-    player_name: 'Z Player',
+    player_name: a?.playerName ?? 'Z Player',
   }
 
   applySource(el, opts.source)
