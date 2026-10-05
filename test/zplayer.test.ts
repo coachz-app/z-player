@@ -11,6 +11,7 @@ class FakeMuxPlayer extends HTMLElement {
   paused = true
   currentTime = 0
   duration = NaN
+  readyState = 0
   pause() {
     if (this.paused) return
     this.paused = true
@@ -24,7 +25,13 @@ class FakeMuxPlayer extends HTMLElement {
 
 beforeAll(() => customElements.define('mux-player', FakeMuxPlayer))
 
-const { createZPlayer } = await import('../src/index')
+const { createZPlayer, pickToken, tokenExpiry, TOKEN_REFRESH_MARGIN_S } = await import('../src/index')
+
+/** An unsigned JWT expiring `inSeconds` from now (only `exp` matters here). */
+const jwt = (inSeconds: number, id = '') => {
+  const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_')
+  return `${b64({ alg: 'none' })}.${b64({ exp: Math.floor(Date.now() / 1000) + inSeconds, id })}.sig`
+}
 
 type Fake = FakeMuxPlayer & Record<string, unknown>
 
@@ -133,5 +140,66 @@ describe('createZPlayer', () => {
     expect(onLiveEnded).toHaveBeenCalledTimes(2)
     h.destroy()
     expect(onProgress).not.toHaveBeenCalled() // no resume position for a live
+  })
+
+  it('keeps a still valid token instead of reloading the stream at every refetch', () => {
+    const t1 = jwt(3600, 'a')
+    const h = createZPlayer(document.createElement('div'), { source: { playbackId: 'pb', tokens: { playback: t1, thumbnail: 'tt' } } })
+    const el = h.element as unknown as Fake
+    el.play()
+    el.currentTime = 120
+    h.update({ tokens: { playback: jwt(3600, 'b'), thumbnail: 'tt' } })
+    expect(el.tokens).toEqual({ playback: t1, thumbnail: 'tt' })
+    expect(el.hasAttribute('playback-token')).toBe(false) // nothing reloaded
+    expect(el.currentTime).toBe(120)
+    h.destroy()
+  })
+
+  it('replaces an expiring token in place, keeping position and playing state', () => {
+    const box = document.createElement('div')
+    const h = createZPlayer(box, { source: { playbackId: 'pb', tokens: { playback: jwt(60, 'a') } } })
+    const el = h.element as unknown as Fake
+    el.readyState = 4
+    el.play()
+    el.currentTime = 300
+    const fresh = jwt(3600, 'b')
+    h.update({ tokens: { playback: fresh } })
+    expect(box.contains(el)).toBe(true) // same player
+    expect(el.getAttribute('playback-token')).toBe(fresh)
+    expect((el.tokens as { playback?: string }).playback).toBe(fresh)
+    // Mux Player reloads the stream: back to the start, paused, then loaded.
+    el.pause()
+    el.currentTime = 0
+    el.dispatchEvent(new Event('loadedmetadata'))
+    expect(el.currentTime).toBe(300)
+    expect(el.paused).toBe(false)
+    h.destroy()
+  })
+
+  it('takes a fresh token at once before playback starts, and ignores tokens for a URL', () => {
+    const h = createZPlayer(document.createElement('div'), { source: { playbackId: 'pb', tokens: { playback: 'not-a-jwt' } } })
+    const el = h.element as unknown as Fake
+    h.update({ tokens: { playback: 'fresh' } })
+    expect(el.getAttribute('playback-token')).toBe('fresh')
+    el.dispatchEvent(new Event('loadedmetadata'))
+    expect(el.paused).toBe(true) // nothing to restore
+    h.destroy()
+    const u = createZPlayer(document.createElement('div'), { source: { src: 'a' } })
+    u.update({ tokens: { playback: 'x' } })
+    expect(u.element.hasAttribute('playback-token')).toBe(false)
+    u.destroy()
+  })
+
+  it('picks the token to keep', () => {
+    const valid = jwt(TOKEN_REFRESH_MARGIN_S + 60)
+    const expiring = jwt(TOKEN_REFRESH_MARGIN_S - 60)
+    expect(tokenExpiry(valid)).toBeGreaterThan(Date.now() / 1000)
+    expect(tokenExpiry('garbage')).toBeUndefined()
+    expect(pickToken(valid, 'new')).toBe(valid)
+    expect(pickToken(expiring, 'new')).toBe('new')
+    expect(pickToken(jwt(-10), 'new')).toBe('new')
+    expect(pickToken(undefined, 'new')).toBe('new')
+    expect(pickToken(valid, undefined)).toBe(valid)
+    expect(pickToken('garbage', 'new')).toBe('new')
   })
 })
