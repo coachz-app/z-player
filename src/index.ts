@@ -13,10 +13,15 @@ import 'media-chrome/lang/fr.js'
 import { setLanguage } from 'media-chrome/utils/i18n.js'
 import type MuxPlayerElement from '@mux/mux-player'
 
+/** Signed playback tokens (JWT) of a private Mux playback ID: video, thumbnail, storyboard. */
+export interface ZTokens {
+  playback?: string
+  thumbnail?: string
+  storyboard?: string
+}
+
 /** A Mux playback ID (with its tokens when the playback is signed) or any HLS / MP4 URL. */
-export type ZSource =
-  | { playbackId: string; tokens?: { playback?: string; thumbnail?: string; storyboard?: string } }
-  | { src: string }
+export type ZSource = { playbackId: string; tokens?: ZTokens } | { src: string }
 
 export type ZResolution = '720p' | '1080p' | '1440p' | '2160p'
 
@@ -70,8 +75,12 @@ export interface ZPlayerOptions {
 
 export interface ZPlayerHandle {
   element: MuxPlayerElement
-  /** Updates the options that do not change the source (theme, callbacks…). */
-  update(options: Partial<Omit<ZPlayerOptions, 'source'>>): void
+  /**
+   * Updates the options that do not change the source (theme, callbacks…) and,
+   * with `tokens`, refreshes the signed tokens of the same playback ID without
+   * rebuilding the player (see `refreshTokens` for when a token is replaced).
+   */
+  update(options: Partial<Omit<ZPlayerOptions, 'source'>> & { tokens?: ZTokens }): void
   destroy(): void
 }
 
@@ -88,6 +97,41 @@ function disableCast() {
   const c = (globalThis as { chrome?: { cast?: unknown } }).chrome
   if (c && !c.cast) c.cast = { isAvailable: false }
 }
+
+/**
+ * A token is replaced only when the current one is missing, expired or expires
+ * within this margin. Servers usually sign a new token on every request (each
+ * refetch of the page data), and replacing the playback token makes Mux Player
+ * reload the stream: keeping a still valid token avoids a reload every refetch.
+ */
+export const TOKEN_REFRESH_MARGIN_S = 5 * 60
+
+/** Expiry (seconds since epoch) of a JWT, or undefined when it cannot be read. */
+export function tokenExpiry(token: string): number | undefined {
+  try {
+    const part = token.split('.')[1]
+    if (!part) return undefined
+    const json = atob(part.replace(/-/g, '+').replace(/_/g, '/').padEnd(Math.ceil(part.length / 4) * 4, '='))
+    const exp = (JSON.parse(json) as { exp?: unknown }).exp
+    return typeof exp === 'number' ? exp : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * The token to keep between the current one and a freshly signed one: the
+ * current token while it stays valid beyond the margin, the fresh one otherwise
+ * (a token whose expiry cannot be read is treated as expiring).
+ */
+export function pickToken(current: string | undefined, next: string | undefined, now = Date.now() / 1000): string | undefined {
+  if (!next || next === current) return current
+  if (!current) return next
+  const exp = tokenExpiry(current)
+  return exp !== undefined && exp - now > TOKEN_REFRESH_MARGIN_S ? current : next
+}
+
+const TOKEN_ATTRIBUTES = { playback: 'playback-token', thumbnail: 'thumbnail-token', storyboard: 'storyboard-token' } as const
 
 function applySource(el: MuxPlayerElement, source: ZSource) {
   if ('playbackId' in source) {
@@ -184,10 +228,62 @@ export function createZPlayer(container: HTMLElement, options: ZPlayerOptions): 
   el.addEventListener('ended', onEnded)
   el.addEventListener('error', onError)
 
+  /**
+   * Refreshes the tokens of the same playback ID in place, never rebuilding the
+   * player (that would cut a live, lose the DVR position or restart a video at
+   * its initial start time).
+   *
+   * Mux checks the token when the stream is loaded, and a new playback token
+   * means a new stream URL: Mux Player (mux-video) then reloads the source. So a
+   * token is only replaced when it expires soon (`pickToken`): with tokens valid
+   * for hours, that is at most one reload per validity period instead of one per
+   * refetch. When the playback token must change after playback has started,
+   * the position (on-demand, or behind the live edge) and the playing state are
+   * restored once the new stream is loaded. Thumbnail and storyboard tokens do
+   * not touch the stream.
+   *
+   * Tokens are set through their attributes: the `tokens` property of Mux
+   * Player only stores the value and does not re-render the player.
+   */
+  const refreshTokens = (fresh: ZTokens) => {
+    const source = opts.source
+    if (!('playbackId' in source)) return
+    const current = el.tokens ?? {}
+    const kept: ZTokens = {
+      playback: pickToken(current.playback, fresh.playback),
+      thumbnail: pickToken(current.thumbnail, fresh.thumbnail),
+      storyboard: pickToken(current.storyboard, fresh.storyboard),
+    }
+    const changed = (Object.keys(TOKEN_ATTRIBUTES) as (keyof ZTokens)[]).filter((k) => kept[k] && kept[k] !== current[k])
+    if (changed.length === 0) return
+    opts = { ...opts, source: { ...source, tokens: { ...source.tokens, ...kept } } }
+
+    if (changed.includes('playback')) {
+      const started = el.readyState > 0 || !el.paused || el.currentTime > 0
+      if (started) {
+        const wasPlaying = !el.paused
+        const position = el.currentTime
+        const s = el.seekable
+        const behindLive = opts.live && s && s.length > 0 && s.end(s.length - 1) - position > 30
+        el.addEventListener(
+          'loadedmetadata',
+          () => {
+            if (!opts.live || behindLive) el.currentTime = position
+            if (wasPlaying) void el.play()?.catch(() => {})
+          },
+          { once: true },
+        )
+      }
+    }
+    el.tokens = { ...current, ...kept }
+    for (const k of changed) el.setAttribute(TOKEN_ATTRIBUTES[k], kept[k] as string)
+  }
+
   return {
     element: el,
-    update(next) {
+    update({ tokens, ...next }) {
       opts = { ...opts, ...next }
+      if (tokens) refreshTokens(tokens)
       if (next.theme) {
         const t = { ...DEFAULT_THEME, ...next.theme }
         el.accentColor = t.accent

@@ -11,14 +11,14 @@ Lecteur vidéo réutilisable pour le streaming HLS, construit sur [Mux Player](h
 | Confort | aperçus au survol de la barre (storyboards Mux), sous-titres, vitesses 0,75–2×, plein écran, image dans l'image, AirPlay, Chromecast, raccourcis clavier |
 | Application | interface en français, thème aux couleurs du projet, **reprise de position** (`startTime` + `onProgress` toutes les 10 s, à la pause et en quittant), **une seule vidéo à la fois** sur la page |
 | Mesure | Mux Data intégré (`analytics.envKey`, identifiant de vidéo et de spectateur) |
-| Lecture signée | `tokens` (vidéo, vignette, aperçus) fournis par votre serveur |
+| Lecture signée | `tokens` (vidéo, vignette, aperçus) fournis par votre serveur ; un nouveau jeton ne reconstruit pas le lecteur (voir plus bas) |
 
 ## Installation
 
 Chaque version est publiée en archive sur les [releases](https://github.com/coachz-app/z-player/releases) (aucun compte ni jeton nécessaire) :
 
 ```bash
-npm install https://github.com/coachz-app/z-player/releases/download/v0.3.0/coachz-app-z-player-0.3.0.tgz
+npm install https://github.com/coachz-app/z-player/releases/download/v0.3.1/coachz-app-z-player-0.3.1.tgz
 ```
 
 ## React
@@ -45,13 +45,15 @@ const ZPlayer = lazy(() => import('@coachz-app/z-player/react'))
 Live : `source={{ playbackId }}` + `live` (DVR par défaut, `dvr={false}` pour le désactiver) + `onLiveEnded={reload}`.
 Une URL quelconque (HLS ou MP4) : `source={{ src: 'https://…/video.m3u8' }}`.
 
+Jetons signés : le lecteur n'est reconstruit que si la vidéo change (`playbackId` ou `src`, `live`, `autoplay`). Un nouveau jeton pour la même vidéo (votre API en signe un à chaque requête) est appliqué sur place, et seulement quand le jeton en cours expire dans moins de 5 minutes : remplacer le jeton vidéo recharge le flux, Z Player garde alors la position et la lecture en cours.
+
 ## JavaScript
 
 ```js
 import { createZPlayer } from '@coachz-app/z-player'
 
 const player = createZPlayer(document.querySelector('#player'), { source: { src: url }, title: 'Ma vidéo' })
-// player.update({ theme: { accent: '#0070f3' } }) ; player.destroy()
+// player.update({ theme: { accent: '#0070f3' } }) ; player.update({ tokens }) ; player.destroy()
 ```
 
 Le module charge Mux Player (≈ 320 Ko compressés, hls.js inclus) : importez-le à la demande (`import()`), au moment d'afficher un lecteur.
