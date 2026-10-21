@@ -119,6 +119,52 @@ describe('createZPlayer', () => {
     expect(onProgress).toHaveBeenLastCalledWith(300, 600)
   })
 
+  it('reports progress when the page is hidden or closed, until destroyed', () => {
+    const onProgress = vi.fn()
+    const h = createZPlayer(document.createElement('div'), { source: { src: 'a' }, onProgress })
+    const el = h.element as unknown as FakeMuxPlayer
+    el.duration = 600
+    el.play()
+    el.currentTime = 42
+    const visibility = vi.spyOn(document, 'visibilityState', 'get')
+    visibility.mockReturnValue('visible')
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(onProgress).not.toHaveBeenCalled() // coming back: nothing to save
+    visibility.mockReturnValue('hidden')
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(onProgress).toHaveBeenLastCalledWith(42, 600)
+    el.currentTime = 57
+    window.dispatchEvent(new Event('pagehide'))
+    expect(onProgress).toHaveBeenLastCalledWith(57, 600)
+    h.destroy()
+    onProgress.mockClear()
+    window.dispatchEvent(new Event('pagehide'))
+    document.dispatchEvent(new Event('visibilitychange'))
+    expect(onProgress).not.toHaveBeenCalled() // listeners removed
+    visibility.mockRestore()
+  })
+
+  it('updates the Mux Data viewer and title in place', () => {
+    const h = createZPlayer(document.createElement('div'), {
+      source: { playbackId: 'pb' },
+      title: 'Capsule',
+      analytics: { envKey: 'env', videoId: 'content:1' },
+    })
+    const el = h.element as unknown as Fake
+    expect(el.metadata).toMatchObject({ video_id: 'content:1', viewer_user_id: undefined })
+    const first = el.metadata
+    h.update({ analytics: { viewerId: '42' } }) // the profile arrives after mount
+    expect(el.metadata).toEqual({ video_id: 'content:1', video_title: 'Capsule', viewer_user_id: '42', player_name: 'Z Player' })
+    expect(el.metadata).not.toBe(first) // a new object: Mux Player sends it to the running view
+    h.update({ title: 'Capsule 2' })
+    expect(el.metadata).toMatchObject({ video_title: 'Capsule 2', viewer_user_id: '42' })
+    expect(el.getAttribute('aria-label')).toBe('Capsule 2')
+    const same = el.metadata
+    h.update({ title: 'Capsule 2', analytics: { viewerId: '42' }, theme: {} })
+    expect(el.metadata).toBe(same) // nothing changed: nothing sent
+    h.destroy()
+  })
+
   it('a destroyed player never plays on (late autoplay)', () => {
     const h = createZPlayer(document.createElement('div'), { source: { playbackId: 'pb' }, autoplay: true })
     const el = h.element as unknown as Fake

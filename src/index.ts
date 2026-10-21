@@ -79,6 +79,10 @@ export interface ZPlayerHandle {
    * Updates the options that do not change the source (theme, callbacks…) and,
    * with `tokens`, refreshes the signed tokens of the same playback ID without
    * rebuilding the player (see `refreshTokens` for when a token is replaced).
+   * `title` and the `analytics` identifiers (`videoId`, `viewerId`,
+   * `playerName`) update the Mux Data view in place, e.g. when the viewer is
+   * known only after the player was created; `envKey`, `cookies` and turning
+   * analytics on or off only apply to a new player.
    */
   update(options: Partial<Omit<ZPlayerOptions, 'source'>> & { tokens?: ZTokens }): void
   destroy(): void
@@ -181,18 +185,36 @@ export function createZPlayer(container: HTMLElement, options: ZPlayerOptions): 
   el.disableTracking = opts.analytics === false || navigator.doNotTrack === '1'
   el.disableCookies = !a?.cookies
   if (a?.envKey) el.envKey = a.envKey
-  el.metadata = {
+  let metadata: Record<string, string | undefined> = {
     video_id: a?.videoId,
     video_title: opts.title,
     viewer_user_id: a?.viewerId,
     player_name: a?.playerName ?? 'Z Player',
+  }
+  el.metadata = metadata
+  // Mux Player sends new metadata to Mux Data at once (same view): a viewer
+  // known only after mount is attached to the view that is already running.
+  const updateMetadata = (next: Partial<ZPlayerOptions>) => {
+    const changes: Record<string, string | undefined> = {}
+    if (next.title !== undefined) changes.video_title = next.title
+    const an = next.analytics
+    if (an) {
+      if (an.videoId !== undefined) changes.video_id = an.videoId
+      if (an.viewerId !== undefined) changes.viewer_user_id = an.viewerId
+      if (an.playerName !== undefined) changes.player_name = an.playerName
+    }
+    if (Object.entries(changes).every(([k, v]) => metadata[k] === v)) return
+    metadata = { ...metadata, ...changes }
+    el.metadata = metadata
   }
 
   applySource(el, opts.source)
   container.appendChild(el)
   players.add(el)
 
-  // Progress: every few seconds while playing, at pause and when leaving.
+  // Progress: every few seconds while playing, at pause, at the end, when the
+  // page is hidden or closed (tab switch, PWA sent to the background, tab
+  // closed: the interval would lose up to its period) and when leaving.
   let timer: ReturnType<typeof setInterval> | undefined
   const report = () => {
     if (opts.live) return
@@ -223,10 +245,20 @@ export function createZPlayer(container: HTMLElement, options: ZPlayerOptions): 
     const message = (ev as CustomEvent<{ message?: string } | undefined>).detail?.message
     opts.onError?.(message || 'La vidéo est momentanément indisponible.')
   }
+  // `pagehide` is the last reliable event when a page is closed (mobile
+  // browsers may skip it: `visibilitychange` to hidden comes first). The
+  // consumer should send the position with `fetch(..., { keepalive: true })`
+  // so that the request survives the page.
+  const onPageHide = () => report()
+  const onVisibilityChange = () => {
+    if (document.visibilityState === 'hidden') report()
+  }
   el.addEventListener('play', onPlay)
   el.addEventListener('pause', onPause)
   el.addEventListener('ended', onEnded)
   el.addEventListener('error', onError)
+  window.addEventListener('pagehide', onPageHide)
+  document.addEventListener('visibilitychange', onVisibilityChange)
 
   /**
    * Refreshes the tokens of the same playback ID in place, never rebuilding the
@@ -284,6 +316,11 @@ export function createZPlayer(container: HTMLElement, options: ZPlayerOptions): 
     update({ tokens, ...next }) {
       opts = { ...opts, ...next }
       if (tokens) refreshTokens(tokens)
+      if (next.title !== undefined) {
+        if (next.title) el.setAttribute('aria-label', next.title)
+        else el.removeAttribute('aria-label')
+      }
+      if (opts.analytics !== false) updateMetadata(next)
       if (next.theme) {
         const t = { ...DEFAULT_THEME, ...next.theme }
         el.accentColor = t.accent
@@ -300,6 +337,8 @@ export function createZPlayer(container: HTMLElement, options: ZPlayerOptions): 
       el.removeEventListener('pause', onPause)
       el.removeEventListener('ended', onEnded)
       el.removeEventListener('error', onError)
+      window.removeEventListener('pagehide', onPageHide)
+      document.removeEventListener('visibilitychange', onVisibilityChange)
       players.delete(el)
       // A player removed while it is still starting (autoplay, React remounts,
       // navigation to the next video) must never play on, unseen and unreachable:

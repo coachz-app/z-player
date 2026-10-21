@@ -9,8 +9,8 @@ Lecteur vidéo réutilisable pour le streaming HLS, construit sur [Mux Player](h
 | Streaming | qualité adaptative, plafonnée à la taille du lecteur ; rien n'est téléchargé avant la lecture ; CMCD (le CDN sert mieux chaque spectateur) ; **économie de données** (`maxResolution`) |
 | Live | faible latence (flux Mux en mode `low`), **DVR** (revenir au début), signal `onLiveEnded` quand le flux s'arrête (bascule vers le replay) |
 | Confort | aperçus au survol de la barre (storyboards Mux), sous-titres, vitesses 0,75–2×, plein écran, image dans l'image, AirPlay, Chromecast, raccourcis clavier |
-| Application | interface en français, thème aux couleurs du projet, **reprise de position** (`startTime` + `onProgress` toutes les 10 s, à la pause et en quittant), **une seule vidéo à la fois** sur la page |
-| Mesure | Mux Data intégré (`analytics.envKey`, identifiant de vidéo et de spectateur) |
+| Application | interface en français, thème aux couleurs du projet, **reprise de position** (`startTime` + `onProgress` toutes les 10 s, à la pause, à la fin, quand la page est masquée ou fermée et en quittant), **une seule vidéo à la fois** sur la page |
+| Mesure | Mux Data intégré (`analytics.envKey`, identifiant de vidéo et de spectateur, mis à jour sur place s'il arrive après le montage) |
 | Lecture signée | `tokens` (vidéo, vignette, aperçus) fournis par votre serveur ; un nouveau jeton ne reconstruit pas le lecteur (voir plus bas) |
 
 ## Installation
@@ -18,7 +18,7 @@ Lecteur vidéo réutilisable pour le streaming HLS, construit sur [Mux Player](h
 Chaque version est publiée en archive sur les [releases](https://github.com/coachz-app/z-player/releases) (aucun compte ni jeton nécessaire) :
 
 ```bash
-npm install https://github.com/coachz-app/z-player/releases/download/v0.3.1/coachz-app-z-player-0.3.1.tgz
+npm install https://github.com/coachz-app/z-player/releases/download/v0.3.2/coachz-app-z-player-0.3.2.tgz
 ```
 
 ## React
@@ -45,6 +45,10 @@ const ZPlayer = lazy(() => import('@coachz-app/z-player/react'))
 Live : `source={{ playbackId }}` + `live` (DVR par défaut, `dvr={false}` pour le désactiver) + `onLiveEnded={reload}`.
 Une URL quelconque (HLS ou MP4) : `source={{ src: 'https://…/video.m3u8' }}`.
 
+Reprise de position : `onProgress` est aussi appelé quand la page passe en arrière-plan (`visibilitychange`) ou se ferme (`pagehide`). Envoyez alors la position avec `fetch(url, { method: 'PUT', keepalive: true, … })` : sans `keepalive`, le navigateur annule la requête quand la page se ferme.
+
+Mux Data : `title` et les identifiants `analytics` (`viewerId`, `videoId`, `playerName`) sont mis à jour dans la vue en cours, sans reconstruire le lecteur ; on peut donc monter le lecteur avant de connaître l'utilisateur (profil encore en chargement). `envKey`, `cookies` et `analytics={false}` ne s'appliquent qu'à un nouveau lecteur.
+
 Jetons signés : le lecteur n'est reconstruit que si la vidéo change (`playbackId` ou `src`, `live`, `autoplay`). Un nouveau jeton pour la même vidéo (votre API en signe un à chaque requête) est appliqué sur place, et seulement quand le jeton en cours expire dans moins de 5 minutes : remplacer le jeton vidéo recharge le flux, Z Player garde alors la position et la lecture en cours.
 
 ## JavaScript
@@ -53,7 +57,7 @@ Jetons signés : le lecteur n'est reconstruit que si la vidéo change (`playback
 import { createZPlayer } from '@coachz-app/z-player'
 
 const player = createZPlayer(document.querySelector('#player'), { source: { src: url }, title: 'Ma vidéo' })
-// player.update({ theme: { accent: '#0070f3' } }) ; player.update({ tokens }) ; player.destroy()
+// player.update({ theme: { accent: '#0070f3' } }) ; player.update({ tokens }) ; player.update({ analytics: { viewerId: '42' } }) ; player.destroy()
 ```
 
 Le module charge Mux Player (≈ 320 Ko compressés, hls.js inclus) : importez-le à la demande (`import()`), au moment d'afficher un lecteur.
