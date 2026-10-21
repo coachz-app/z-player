@@ -1,4 +1,4 @@
-import { act } from 'react'
+import { act, createRef } from 'react'
 import { createRoot } from 'react-dom/client'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
 
@@ -25,6 +25,7 @@ beforeAll(() => {
 })
 
 const { ZPlayer } = await import('../src/react')
+type Handle = import('../src/index').ZPlayerHandle
 
 type Fake = FakeMuxPlayer & { playbackId?: string; tokens?: { playback?: string }; metadata?: Record<string, unknown> }
 
@@ -80,5 +81,29 @@ describe('ZPlayer (React)', () => {
     expect(player()).toBe(first) // same player, same view
     expect(first.metadata).toMatchObject({ video_id: 'content:1', video_title: 'Capsule', viewer_user_id: '42' })
     act(() => root.unmount())
+  })
+
+  it('exposes the handle and the latest onTimeUpdate, rebuilds for another kind of stream', () => {
+    const box = document.createElement('div')
+    const root = createRoot(box)
+    const ref = createRef<Handle>() as { current: Handle | null }
+    const first = vi.fn()
+    const second = vi.fn()
+    const render = (onTimeUpdate: () => void, streamType: 'live:dvr' | 'on-demand' = 'live:dvr') =>
+      act(() => root.render(<ZPlayer source={{ playbackId: 'pb1' }} streamType={streamType} handleRef={ref} onTimeUpdate={onTimeUpdate} />))
+    render(first)
+    const el = box.querySelector('mux-player') as Fake
+    expect(ref.current?.element).toBe(el)
+    expect(ref.current?.getState().live).toBe(true)
+    render(second)
+    expect(box.querySelector('mux-player')).toBe(el) // same player
+    el.dispatchEvent(new Event('timeupdate'))
+    expect(first).not.toHaveBeenCalled()
+    expect(second).toHaveBeenCalledWith(expect.objectContaining({ live: true }))
+    render(second, 'on-demand') // the replay: a new player
+    expect(box.querySelector('mux-player')).not.toBe(el)
+    expect(ref.current?.getState().live).toBe(false)
+    act(() => root.unmount())
+    expect(ref.current).toBeNull()
   })
 })

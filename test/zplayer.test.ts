@@ -25,7 +25,10 @@ class FakeMuxPlayer extends HTMLElement {
 
 beforeAll(() => customElements.define('mux-player', FakeMuxPlayer))
 
-const { createZPlayer, pickToken, tokenExpiry, TOKEN_REFRESH_MARGIN_S } = await import('../src/index')
+const { createZPlayer, pickToken, tokenExpiry, resolveStreamType, TOKEN_REFRESH_MARGIN_S, LIVE_EDGE_TOLERANCE_S } = await import('../src/index')
+
+/** A seekable range [start, end] like the one of a media element. */
+const range = (start: number, end: number) => ({ length: 1, start: () => start, end: () => end }) as unknown as TimeRanges
 
 /** An unsigned JWT expiring `inSeconds` from now (only `exp` matters here). */
 const jwt = (inSeconds: number, id = '') => {
@@ -247,5 +250,86 @@ describe('createZPlayer', () => {
     expect(pickToken(undefined, 'new')).toBe('new')
     expect(pickToken(valid, undefined)).toBe(valid)
     expect(pickToken('garbage', 'new')).toBe('new')
+  })
+
+  it('maps the kind of stream: live:dvr, live without rewind, on-demand', () => {
+    expect(resolveStreamType({})).toBe('on-demand')
+    expect(resolveStreamType({ live: true })).toBe('live:dvr')
+    expect(resolveStreamType({ live: true, dvr: false })).toBe('live')
+    expect(resolveStreamType({ streamType: 'live:dvr', live: false })).toBe('live:dvr')
+    const dvr = createZPlayer(document.createElement('div'), { source: { src: 'a' }, streamType: 'live:dvr' })
+    expect((dvr.element as unknown as Fake).streamType).toBe('live')
+    expect((dvr.element as unknown as Fake).targetLiveWindow).toBe(Number.POSITIVE_INFINITY)
+    dvr.destroy()
+    const edge = createZPlayer(document.createElement('div'), { source: { src: 'a' }, streamType: 'live' })
+    expect((edge.element as unknown as Fake).targetLiveWindow).toBe(0)
+    edge.destroy()
+  })
+
+  it('follows the position of a live with DVR and goes back to the live edge', () => {
+    const onTimeUpdate = vi.fn()
+    const onLiveEdgeChange = vi.fn()
+    const h = createZPlayer(document.createElement('div'), { source: { src: 'a' }, streamType: 'live:dvr', onTimeUpdate, onLiveEdgeChange })
+    const el = h.element as unknown as Fake
+    Object.defineProperty(el, 'seekable', { configurable: true, get: () => range(0, 1800) })
+    el.play()
+    el.currentTime = 1798
+    el.dispatchEvent(new Event('timeupdate'))
+    expect(onTimeUpdate).toHaveBeenLastCalledWith(expect.objectContaining({ position: 1798, live: true, atLiveEdge: true, behindLive: 2 }))
+    expect(onLiveEdgeChange).not.toHaveBeenCalled() // first state: nothing changed
+
+    h.seek(600) // rewind
+    el.dispatchEvent(new Event('seeked'))
+    expect(el.currentTime).toBe(600)
+    expect(h.getState()).toMatchObject({ position: 600, behindLive: 1200, atLiveEdge: false })
+    expect(onLiveEdgeChange).toHaveBeenLastCalledWith(false)
+    el.dispatchEvent(new Event('timeupdate'))
+    expect(onLiveEdgeChange).toHaveBeenCalledTimes(1) // only changes
+
+    h.seek(-5)
+    expect(el.currentTime).toBe(0) // clamped
+    h.seek(99999)
+    expect(el.currentTime).toBe(1800)
+
+    el.currentTime = 600
+    el.pause()
+    h.goLive()
+    expect(el.currentTime).toBe(1800)
+    expect(el.paused).toBe(false) // plays again
+    el.dispatchEvent(new Event('timeupdate'))
+    expect(onLiveEdgeChange).toHaveBeenLastCalledWith(true)
+
+    el.currentTime = 1800 - LIVE_EDGE_TOLERANCE_S - 1
+    expect(h.getState().atLiveEdge).toBe(false)
+    h.destroy()
+    onTimeUpdate.mockClear()
+    el.dispatchEvent(new Event('timeupdate'))
+    expect(onTimeUpdate).not.toHaveBeenCalled() // listeners removed
+  })
+
+  it('gives the position of an on-demand video (chat replay), never "at the live edge"', () => {
+    const onTimeUpdate = vi.fn()
+    const onLiveEdgeChange = vi.fn()
+    const h = createZPlayer(document.createElement('div'), { source: { src: 'a' }, onTimeUpdate, onLiveEdgeChange })
+    const el = h.element as unknown as Fake
+    el.duration = 3600
+    el.currentTime = 754
+    el.dispatchEvent(new Event('timeupdate'))
+    expect(onTimeUpdate).toHaveBeenLastCalledWith({ position: 754, duration: 3600, live: false, behindLive: 0, atLiveEdge: false, paused: true })
+    h.goLive() // nothing to do on-demand
+    expect(el.currentTime).toBe(754)
+    h.seek(5000)
+    expect(el.currentTime).toBe(3600)
+    expect(onLiveEdgeChange).not.toHaveBeenCalled()
+    h.destroy()
+  })
+
+  it('keeps the kind of stream when options are updated', () => {
+    const onProgress = vi.fn()
+    const h = createZPlayer(document.createElement('div'), { source: { src: 'a' }, streamType: 'live:dvr', onProgress })
+    h.update({ live: false, streamType: 'on-demand' })
+    expect(h.getState().live).toBe(true)
+    h.destroy()
+    expect(onProgress).not.toHaveBeenCalled()
   })
 })
