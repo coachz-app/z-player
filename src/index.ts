@@ -25,6 +25,31 @@ export type ZSource = { playbackId: string; tokens?: ZTokens } | { src: string }
 
 export type ZResolution = '720p' | '1080p' | '1440p' | '2160p'
 
+/**
+ * Kind of stream. `live:dvr` is a live the viewer can rewind (back to its
+ * start) and bring back to the live edge; `live` stays at the live edge.
+ * Mux Player has no `live:dvr` value any more: it is `stream-type="live"` with
+ * `target-live-window="Infinity"` (`live` uses a window of 0).
+ */
+export type ZStreamType = 'on-demand' | 'live' | 'live:dvr'
+
+/** Where the playback is, for a page that follows it (chat replay, "back to live" button…). */
+export interface ZPlaybackState {
+  /**
+   * Position in seconds. On-demand: from the start of the video. Live with DVR:
+   * from the start of the stream (the DVR window starts with the stream).
+   */
+  position: number
+  /** Duration of an on-demand video (NaN before it is known, Infinity for a live). */
+  duration: number
+  live: boolean
+  /** Seconds behind the live edge (0 on-demand). */
+  behindLive: number
+  /** Watching the live edge (always false on-demand). */
+  atLiveEdge: boolean
+  paused: boolean
+}
+
 export interface ZTheme {
   /** Buttons, progress bar (default Coach Z orange). */
   accent?: string
@@ -39,7 +64,11 @@ export interface ZPlayerOptions {
   poster?: string
   /** Accessible name of the player (and video title for analytics). */
   title?: string
-  /** Live stream. With `dvr` (default true) viewers can go back to the start. */
+  /**
+   * Kind of stream (default `on-demand`). Takes precedence over `live` / `dvr`.
+   */
+  streamType?: ZStreamType
+  /** Live stream (same as `streamType: 'live:dvr'`, or `'live'` with `dvr: false`). */
   live?: boolean
   dvr?: boolean
   /** Start playing at once (falls back to muted if the browser refuses sound). */
@@ -71,6 +100,13 @@ export interface ZPlayerOptions {
   /** A live stream is over (or gone): the page can switch to the replay. */
   onLiveEnded?: () => void
   onError?: (message: string) => void
+  /**
+   * The playback moved (while playing, about 4 times a second, and after a
+   * seek). Cheap to receive: a page can sync a chat replay on `position`.
+   */
+  onTimeUpdate?: (state: ZPlaybackState) => void
+  /** A live viewer left the live edge (rewind, long pause) or came back to it. */
+  onLiveEdgeChange?: (atLiveEdge: boolean) => void
 }
 
 export interface ZPlayerHandle {
@@ -85,7 +121,23 @@ export interface ZPlayerHandle {
    * analytics on or off only apply to a new player.
    */
   update(options: Partial<Omit<ZPlayerOptions, 'source'>> & { tokens?: ZTokens }): void
+  /** Current playback state (position, distance to the live edge…). */
+  getState(): ZPlaybackState
+  /** Back to the live edge of a live, and play ("Revenir au direct"). */
+  goLive(): void
+  /** Moves to a position in seconds (clamped to what can be reached). */
+  seek(position: number): void
   destroy(): void
+}
+
+/** Seconds behind the live edge under which a viewer still watches "the live". */
+export const LIVE_EDGE_TOLERANCE_S = 10
+
+/** Whether the options describe a live stream, and one that can be rewound. */
+export function resolveStreamType(o: Pick<ZPlayerOptions, 'streamType' | 'live' | 'dvr'>): ZStreamType {
+  if (o.streamType) return o.streamType
+  if (o.live) return o.dvr === false ? 'live' : 'live:dvr'
+  return 'on-demand'
 }
 
 const DEFAULT_THEME: Required<ZTheme> = { accent: '#FFA500', primary: '#FFFFFF', secondary: '#000000' }
@@ -148,7 +200,9 @@ function applySource(el: MuxPlayerElement, source: ZSource) {
 
 /** Creates a player inside `container` (which it fills). */
 export function createZPlayer(container: HTMLElement, options: ZPlayerOptions): ZPlayerHandle {
-  let opts = options
+  const streamType = resolveStreamType(options)
+  const isLive = streamType !== 'on-demand'
+  let opts = { ...options, live: isLive }
   setLanguage(opts.lang ?? 'fr')
   if (opts.cast === false) disableCast()
   const el = document.createElement('mux-player') as MuxPlayerElement
@@ -171,9 +225,9 @@ export function createZPlayer(container: HTMLElement, options: ZPlayerOptions): 
   el.preferCmcd = 'query'
   el.defaultHiddenCaptions = true
   el.playbackRates = [0.75, 1, 1.25, 1.5, 2]
-  if (opts.live) {
+  if (isLive) {
     el.streamType = 'live'
-    el.targetLiveWindow = opts.dvr === false ? 0 : Number.POSITIVE_INFINITY
+    el.targetLiveWindow = streamType === 'live:dvr' ? Number.POSITIVE_INFINITY : 0
   } else {
     el.streamType = 'on-demand'
     if (opts.startTime && opts.startTime > 5) el.startTime = opts.startTime
@@ -253,10 +307,50 @@ export function createZPlayer(container: HTMLElement, options: ZPlayerOptions): 
   const onVisibilityChange = () => {
     if (document.visibilityState === 'hidden') report()
   }
+
+  // Playback state, for a page that follows the position (chat replay) or
+  // shows its own "back to live" button.
+  const liveEnd = () => {
+    const s = el.seekable
+    return s && s.length > 0 ? s.end(s.length - 1) : NaN
+  }
+  const getState = (): ZPlaybackState => {
+    const position = el.currentTime || 0
+    if (!isLive) return { position, duration: el.duration, live: false, behindLive: 0, atLiveEdge: false, paused: el.paused }
+    const end = liveEnd()
+    const behindLive = Number.isFinite(end) ? Math.max(0, end - position) : 0
+    return { position, duration: Number.POSITIVE_INFINITY, live: true, behindLive, atLiveEdge: behindLive <= LIVE_EDGE_TOLERANCE_S, paused: el.paused }
+  }
+  let atEdge: boolean | undefined
+  const onTimeUpdate = () => {
+    const state = getState()
+    opts.onTimeUpdate?.(state)
+    if (isLive && state.atLiveEdge !== atEdge) {
+      // The first state is the reference: only changes are reported.
+      if (atEdge !== undefined) opts.onLiveEdgeChange?.(state.atLiveEdge)
+      atEdge = state.atLiveEdge
+    }
+  }
+  const goLive = () => {
+    if (!isLive) return
+    const end = liveEnd()
+    if (Number.isFinite(end)) el.currentTime = end
+    if (el.paused) void el.play()?.catch(() => {})
+  }
+  const seek = (position: number) => {
+    const s = el.seekable
+    let p = Math.max(0, position)
+    if (s && s.length > 0) p = Math.min(Math.max(p, s.start(0)), s.end(s.length - 1))
+    else if (Number.isFinite(el.duration)) p = Math.min(p, el.duration)
+    el.currentTime = p
+  }
+
   el.addEventListener('play', onPlay)
   el.addEventListener('pause', onPause)
   el.addEventListener('ended', onEnded)
   el.addEventListener('error', onError)
+  el.addEventListener('timeupdate', onTimeUpdate)
+  el.addEventListener('seeked', onTimeUpdate)
   window.addEventListener('pagehide', onPageHide)
   document.addEventListener('visibilitychange', onVisibilityChange)
 
@@ -314,7 +408,8 @@ export function createZPlayer(container: HTMLElement, options: ZPlayerOptions): 
   return {
     element: el,
     update({ tokens, ...next }) {
-      opts = { ...opts, ...next }
+      // The kind of stream only changes with a new player.
+      opts = { ...opts, ...next, live: isLive }
       if (tokens) refreshTokens(tokens)
       if (next.title !== undefined) {
         if (next.title) el.setAttribute('aria-label', next.title)
@@ -330,6 +425,9 @@ export function createZPlayer(container: HTMLElement, options: ZPlayerOptions): 
       if (next.poster !== undefined) el.poster = next.poster
       if (next.maxResolution !== undefined) el.maxResolution = next.maxResolution
     },
+    getState,
+    goLive,
+    seek,
     destroy() {
       clearInterval(timer)
       report()
@@ -337,6 +435,8 @@ export function createZPlayer(container: HTMLElement, options: ZPlayerOptions): 
       el.removeEventListener('pause', onPause)
       el.removeEventListener('ended', onEnded)
       el.removeEventListener('error', onError)
+      el.removeEventListener('timeupdate', onTimeUpdate)
+      el.removeEventListener('seeked', onTimeUpdate)
       window.removeEventListener('pagehide', onPageHide)
       document.removeEventListener('visibilitychange', onVisibilityChange)
       players.delete(el)
