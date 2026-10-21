@@ -13,8 +13,8 @@ const sourceKey = (s: ZPlayerOptions['source']) => ('playbackId' in s ? `id:${s.
 
 /**
  * React adapter of Z Player. The player is rebuilt when the video (playback ID
- * or URL, live, autoplay) changes; signed tokens, theme, poster and callbacks
- * update in place.
+ * or URL, live, autoplay) changes; signed tokens, theme, poster, title, Mux
+ * Data identifiers (`analytics.viewerId`…) and callbacks update in place.
  */
 export function ZPlayer({ className, ...options }: ZPlayerProps) {
   const box = useRef<HTMLDivElement>(null)
@@ -46,6 +46,18 @@ export function ZPlayer({ className, ...options }: ZPlayerProps) {
   useEffect(() => {
     handle.current?.update({ theme, poster, maxResolution })
   }, [theme, poster, maxResolution])
+
+  // Mux Data: the viewer (often known only once the user profile is loaded)
+  // and the title update the running view, without rebuilding the player.
+  const { title } = options
+  const off = options.analytics === false
+  const analytics = options.analytics || undefined
+  const videoId = analytics?.videoId
+  const viewerId = analytics?.viewerId
+  const playerName = analytics?.playerName
+  useEffect(() => {
+    handle.current?.update({ title, analytics: off ? false : { videoId, viewerId, playerName } })
+  }, [title, off, videoId, viewerId, playerName])
 
   const tokens = 'playbackId' in options.source ? options.source.tokens : undefined
   const { playback, thumbnail, storyboard } = tokens ?? {}

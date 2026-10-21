@@ -26,7 +26,7 @@ beforeAll(() => {
 
 const { ZPlayer } = await import('../src/react')
 
-type Fake = FakeMuxPlayer & { playbackId?: string; tokens?: { playback?: string } }
+type Fake = FakeMuxPlayer & { playbackId?: string; tokens?: { playback?: string }; metadata?: Record<string, unknown> }
 
 const jwt = (inSeconds: number, id: string) => {
   const b64 = (o: object) => btoa(JSON.stringify(o)).replace(/=+$/, '').replace(/\+/g, '-').replace(/\//g, '_')
@@ -63,6 +63,22 @@ describe('ZPlayer (React)', () => {
     expect(player()).not.toBe(first)
     expect(player().playbackId).toBe('pb2')
     expect(box.querySelectorAll('mux-player')).toHaveLength(1)
+    act(() => root.unmount())
+  })
+
+  it('attaches the viewer to the running view when it is known after mount', () => {
+    const box = document.createElement('div')
+    const root = createRoot(box)
+    const render = (viewerId?: string) =>
+      act(() => root.render(<ZPlayer source={{ playbackId: 'pb1' }} title="Capsule" analytics={{ envKey: 'env', videoId: 'content:1', viewerId }} />))
+    const player = () => box.querySelector('mux-player') as Fake
+
+    render(undefined) // useMe() has not answered yet
+    const first = player()
+    expect(first.metadata).toMatchObject({ viewer_user_id: undefined })
+    render('42')
+    expect(player()).toBe(first) // same player, same view
+    expect(first.metadata).toMatchObject({ video_id: 'content:1', video_title: 'Capsule', viewer_user_id: '42' })
     act(() => root.unmount())
   })
 })
